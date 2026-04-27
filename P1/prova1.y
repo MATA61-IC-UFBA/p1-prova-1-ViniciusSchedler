@@ -1,3 +1,11 @@
+%code requires {
+typedef struct Valor {
+    int tipo;
+    int ival;
+    char *sval;
+} Valor;
+}
+
 %{
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,18 +20,48 @@ void yyerror(const char *msg);
 #define T_INT 1
 #define T_STRING 2
 #define MAX_VARS 256
+%}
 
-typedef struct {
+%code {
+typedef struct Variavel {
     char *nome;
-    int tipo;
-    int ival;
-    char *sval;
+    Valor valor;
 } Variavel;
 
 static Variavel tabela[MAX_VARS];
 static int qtd_vars = 0;
 
-static int busca_var(char *nome)
+static Valor make_int(int x)
+{
+    Valor v;
+    v.tipo = T_INT;
+    v.ival = x;
+    v.sval = NULL;
+    return v;
+}
+
+static Valor make_string(const char *s)
+{
+    Valor v;
+    v.tipo = T_STRING;
+    v.ival = 0;
+    v.sval = strdup(s ? s : "");
+
+    if (!v.sval)
+        exit(1);
+
+    return v;
+}
+
+static Valor copia_valor(Valor v)
+{
+    if (v.tipo == T_STRING)
+        return make_string(v.sval);
+
+    return make_int(v.ival);
+}
+
+static int busca_var(const char *nome)
 {
     int i;
 
@@ -35,80 +73,109 @@ static int busca_var(char *nome)
     return -1;
 }
 
-static void salva_int(char *nome, int valor)
+static int set_var(const char *nome, Valor v)
 {
     int pos = busca_var(nome);
 
     if (pos == -1) {
-        pos = qtd_vars++;
+        if (qtd_vars >= MAX_VARS)
+            return 0;
+
+        pos = qtd_vars;
         tabela[pos].nome = strdup(nome);
-        tabela[pos].sval = NULL;
+        tabela[pos].valor.tipo = 0;
+        tabela[pos].valor.sval = NULL;
+        qtd_vars++;
+    } else {
+        if (tabela[pos].valor.tipo == T_STRING && tabela[pos].valor.sval)
+            free(tabela[pos].valor.sval);
     }
 
-    if (tabela[pos].tipo == T_STRING && tabela[pos].sval)
-        free(tabela[pos].sval);
-
-    tabela[pos].tipo = T_INT;
-    tabela[pos].ival = valor;
-    tabela[pos].sval = NULL;
-}
-
-static void salva_string(char *nome, char *valor)
-{
-    int pos = busca_var(nome);
-
-    if (pos == -1) {
-        pos = qtd_vars++;
-        tabela[pos].nome = strdup(nome);
-        tabela[pos].sval = NULL;
-    }
-
-    if (tabela[pos].tipo == T_STRING && tabela[pos].sval)
-        free(tabela[pos].sval);
-
-    tabela[pos].tipo = T_STRING;
-    tabela[pos].sval = strdup(valor);
-}
-
-static int pega_int(char *nome, int *saida)
-{
-    int pos = busca_var(nome);
-
-    if (pos == -1 || tabela[pos].tipo != T_INT)
-        return 0;
-
-    *saida = tabela[pos].ival;
+    tabela[pos].valor = copia_valor(v);
     return 1;
 }
 
-static int pega_string(char *nome, char **saida)
+static int get_var(const char *nome, Valor *saida)
 {
     int pos = busca_var(nome);
 
-    if (pos == -1 || tabela[pos].tipo != T_STRING)
+    if (pos == -1)
         return 0;
 
-    *saida = strdup(tabela[pos].sval);
+    *saida = copia_valor(tabela[pos].valor);
     return 1;
 }
 
-static char *concatena(char *a, char *b)
+static Valor opera_int(Valor a, Valor b, char op, int *ok)
 {
-    char *r = malloc(strlen(a) + strlen(b) + 1);
+    *ok = 1;
 
-    if (!r)
+    if (a.tipo != T_INT || b.tipo != T_INT) {
+        *ok = 0;
+        return make_int(0);
+    }
+
+    if (op == '+')
+        return make_int(a.ival + b.ival);
+
+    if (op == '-')
+        return make_int(a.ival - b.ival);
+
+    if (op == '*')
+        return make_int(a.ival * b.ival);
+
+    if (op == '/') {
+        if (b.ival == 0) {
+            *ok = 0;
+            return make_int(0);
+        }
+
+        return make_int(a.ival / b.ival);
+    }
+
+    *ok = 0;
+    return make_int(0);
+}
+
+static Valor concatena(Valor a, Valor b, int *ok)
+{
+    char *tmp;
+    Valor r;
+
+    *ok = 1;
+
+    if (a.tipo != T_STRING || b.tipo != T_STRING) {
+        *ok = 0;
+        return make_string("");
+    }
+
+    tmp = malloc(strlen(a.sval) + strlen(b.sval) + 1);
+
+    if (!tmp)
         exit(1);
 
-    strcpy(r, a);
-    strcat(r, b);
+    strcpy(tmp, a.sval);
+    strcat(tmp, b.sval);
+
+    r = make_string(tmp);
+    free(tmp);
 
     return r;
 }
-%}
+
+static void print_value(Valor v)
+{
+    if (v.tipo == T_INT)
+        fprintf(yyout, "%d\n", v.ival);
+    else if (v.tipo == T_STRING)
+        fprintf(yyout, "%s\n", v.sval);
+}
+}
 
 %union {
     int ival;
     char *sval;
+    Valor valor;
 }
 
 %token ERROR
@@ -122,8 +189,7 @@ static char *concatena(char *a, char *b)
 %token LPAREN RPAREN COMMA
 %token EOL
 
-%type <ival> expr_int
-%type <sval> expr_str concat_args
+%type <valor> expr concat_args
 
 %left PLUS MINUS
 %left TIMES DIV
@@ -142,40 +208,18 @@ stmt_list
 ;
 
 stmt
-: IDENT ASSIGN expr_int EOL
+: IDENT ASSIGN expr EOL
     {
-        salva_int($1, $3);
+        if (!set_var($1, $3))
+            YYERROR;
+
         free($1);
     }
-| IDENT ASSIGN expr_str EOL
+| PRINT expr EOL
     {
-        salva_string($1, $3);
-        free($1);
-        free($3);
+        print_value($2);
     }
-| PRINT LPAREN expr_int RPAREN EOL
-    {
-        fprintf(yyout, "%d\n", $3);
-    }
-| PRINT LPAREN expr_str RPAREN EOL
-    {
-        fprintf(yyout, "%s\n", $3);
-        free($3);
-    }
-| PRINT expr_int EOL
-    {
-        fprintf(yyout, "%d\n", $2);
-    }
-| PRINT expr_str EOL
-    {
-        fprintf(yyout, "%s\n", $2);
-        free($2);
-    }
-| expr_int EOL
-| expr_str EOL
-    {
-        free($1);
-    }
+| expr EOL
 | EOL
 | ERROR EOL
     {
@@ -183,82 +227,76 @@ stmt
     }
 ;
 
-expr_int
+expr
 : NUM
     {
-        $$ = $1;
+        $$ = make_int($1);
+    }
+| STRING
+    {
+        $$ = make_string($1);
+        free($1);
     }
 | IDENT
     {
-        if (!pega_int($1, &$$))
+        if (!get_var($1, &$$))
             YYERROR;
 
         free($1);
     }
-| expr_int PLUS expr_int
+| expr PLUS expr
     {
-        $$ = $1 + $3;
+        int ok;
+        $$ = opera_int($1, $3, '+', &ok);
+        if (!ok) YYERROR;
     }
-| expr_int MINUS expr_int
+| expr MINUS expr
     {
-        $$ = $1 - $3;
+        int ok;
+        $$ = opera_int($1, $3, '-', &ok);
+        if (!ok) YYERROR;
     }
-| expr_int TIMES expr_int
+| expr TIMES expr
     {
-        $$ = $1 * $3;
+        int ok;
+        $$ = opera_int($1, $3, '*', &ok);
+        if (!ok) YYERROR;
     }
-| expr_int DIV expr_int
+| expr DIV expr
     {
-        if ($3 == 0)
-            YYERROR;
-
-        $$ = $1 / $3;
+        int ok;
+        $$ = opera_int($1, $3, '/', &ok);
+        if (!ok) YYERROR;
     }
-| LPAREN expr_int RPAREN
+| LPAREN expr RPAREN
     {
         $$ = $2;
     }
-| LENGTH LPAREN expr_str RPAREN
+| LENGTH LPAREN expr RPAREN
     {
-        $$ = strlen($3);
-        free($3);
-    }
-;
-
-expr_str
-: STRING
-    {
-        $$ = $1;
-    }
-| IDENT
-    {
-        if (!pega_string($1, &$$))
+        if ($3.tipo != T_STRING)
             YYERROR;
 
-        free($1);
+        $$ = make_int(strlen($3.sval));
     }
 | CONCAT LPAREN concat_args RPAREN
     {
         $$ = $3;
     }
-| LPAREN expr_str RPAREN
-    {
-        $$ = $2;
-    }
 ;
 
 concat_args
-: expr_str COMMA expr_str
+: expr COMMA expr
     {
-        $$ = concatena($1, $3);
-        free($1);
-        free($3);
+        int ok;
+        $$ = concatena($1, $3, &ok);
+        if (!ok) YYERROR;
     }
-| concat_args COMMA expr_str
+| concat_args COMMA expr
     {
-        $$ = concatena($1, $3);
-        free($1);
-        free($3);
+        int ok;
+        $$ = concatena($1, $3, &ok);
+        if (!ok) YYERROR;
     }
 ;
 
