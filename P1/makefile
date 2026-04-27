@@ -13,6 +13,6 @@ all:
 	make compile
 
 clean:
-	rm -f lex.yy.c
-	rm -f prova1.tab.*
-	rm -f prova1
+	rm lex.yy.c
+	rm prova1.tab.*
+	rm prova1
