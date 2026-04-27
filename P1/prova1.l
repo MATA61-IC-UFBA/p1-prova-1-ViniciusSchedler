@@ -3,8 +3,19 @@
 #include <stdlib.h>
 #include <string.h>
 
-void yyerror(const char *msg);
-int yylex();
+static char *remove_aspas(const char *txt)
+{
+    int n = strlen(txt);
+    char *s = malloc(n - 1);
+
+    if (!s)
+        exit(1);
+
+    strncpy(s, txt + 1, n - 2);
+    s[n - 2] = '\0';
+
+    return s;
+}
 %}
 
 %option noyywrap
@@ -21,13 +32,18 @@ int yylex();
 "concat"        { return CONCAT; }
 "length"        { return LENGTH; }
 
-[0-9]+          { return NUM; }
+[0-9]+          {
+                    yylval.ival = atoi(yytext);
+                    return NUM;
+                }
 
 [a-zA-Z_][a-zA-Z0-9_]* {
+                    yylval.sval = strdup(yytext);
                     return IDENT;
                 }
 
 \"([^\"\n])*\"  {
+                    yylval.sval = remove_aspas(yytext);
                     return STRING;
                 }
 
