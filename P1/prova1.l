@@ -32,7 +32,7 @@ static char *remove_aspas(const char *txt)
 "concat"        { return CONCAT; }
 "length"        { return LENGTH; }
 
-[0-9]+          {
+[0-9]+(\.[0-9]+)? {
                     yylval.ival = atoi(yytext);
                     return NUM;
                 }
